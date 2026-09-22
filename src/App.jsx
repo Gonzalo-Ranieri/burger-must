@@ -299,6 +299,12 @@ function TiendaOnline(){
   const [submitting,setSubmitting]=useState(false);
   const [error,setError]=useState(null);
 
+  const MODOS_PAGO=[
+    {id:"efectivo", label:"Efectivo en caja",     desc:"Pagás al retirar"},
+    {id:"posnet",   label:"Tarjeta / QR en caja", desc:"Pasás la tarjeta al retirar"},
+    {id:"online",   label:"MercadoPago",           desc:"Pagás ahora desde la app"},
+  ];
+
   const agregar=item=>setCarrito(c=>{const ex=c.find(x=>x.id===item.id);return ex?c.map(x=>x.id===item.id?{...x,qty:x.qty+1}:x):[...c,{...item,qty:1}];});
   const quitar=id=>setCarrito(c=>{const ex=c.find(x=>x.id===id);return ex?.qty===1?c.filter(x=>x.id!==id):c.map(x=>x.id===id?{...x,qty:x.qty-1}:x);});
   const total=carrito.reduce((s,x)=>s+x.precio*x.qty,0);
@@ -312,12 +318,14 @@ function TiendaOnline(){
         modo_entrega:modoEntrega,
         modo_pago:modoPago,
       });
-      // Si pago online, redirigir a MercadoPago
       if(modoPago==="online"){
+        // Redirige a MP; el webhook confirmará el pedido al aprobar
         const{init_point}=await API.pagos.preference(pedido.id);
         window.location.href=init_point;
         return;
       }
+      // Efectivo y posnet: pedido creado en "pendiente_caja"
+      // El cajero lo confirma cuando cobra en el local
       setOk(pedido);setCarrito([]);setModal(false);setVerCarrito(false);
     }catch(e){setError(e.message);}
     finally{setSubmitting(false);}
@@ -368,9 +376,14 @@ function TiendaOnline(){
         <div style={{position:"fixed",inset:0,background:"rgba(61,26,46,.85)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
           <div style={{background:C.blanco,borderRadius:16,padding:"44px 36px",textAlign:"center",maxWidth:320,width:"100%"}}>
             <div style={{width:52,height:52,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",color:"#2e7d32"}}>{Ico.check}</div>
-            <h2 className="cav" style={{fontSize:32,color:C.bordoOscuro,marginBottom:6}}>Pedido confirmado</h2>
+            <h2 className="cav" style={{fontSize:32,color:C.bordoOscuro,marginBottom:6}}>Pedido registrado</h2>
             <p style={{color:C.bordoMedio,fontWeight:600,fontSize:15,marginBottom:8}}>{ok.numero}</p>
-            <p style={{color:C.grisMedio,marginBottom:24}}>Ya está en cocina. Te avisamos cuando esté listo.</p>
+            <p style={{color:C.grisMedio,marginBottom:8}}>
+              {ok.modo_pago==="efectivo"
+                ? "Acercate a la caja para abonar en efectivo."
+                : "Pasá la tarjeta o escaneá el QR en la caja."}
+            </p>
+            <p style={{color:C.grisMedio,fontSize:13,marginBottom:24}}>Tu pedido entrará a cocina cuando el cajero confirme el pago.</p>
             <button className="btn-p" style={{justifyContent:"center"}} onClick={()=>setOk(null)}>Hacer otro pedido</button>
           </div>
         </div>
@@ -384,10 +397,17 @@ function TiendaOnline(){
               <SelBtn activo={modoEntrega==="takeaway"} onClick={()=>setModoEntrega("takeaway")}>Take away</SelBtn>
               <SelBtn activo={modoEntrega==="delivery"} onClick={()=>setModoEntrega("delivery")}>Delivery</SelBtn>
             </div>
-            <p style={{fontSize:11,fontWeight:600,color:C.grisMedio,letterSpacing:.5,marginBottom:8}}>PAGO</p>
-            <div style={{display:"flex",gap:8,marginBottom:20}}>
-              <SelBtn activo={modoPago==="efectivo"} onClick={()=>setModoPago("efectivo")}>Efectivo</SelBtn>
-              <SelBtn activo={modoPago==="online"} onClick={()=>setModoPago("online")}>MercadoPago</SelBtn>
+            <p style={{fontSize:11,fontWeight:600,color:C.grisMedio,letterSpacing:.5,marginBottom:10}}>FORMA DE PAGO</p>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+              {MODOS_PAGO.map(m=>(
+                <button key={m.id} onClick={()=>setModoPago(m.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderRadius:10,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",background:modoPago===m.id?C.bordoOscuro:C.blanco,color:modoPago===m.id?C.blanco:C.texto,border:`1.5px solid ${modoPago===m.id?C.bordoOscuro:C.grisClaro}`,transition:"all .15s",textAlign:"left"}}>
+                  <div>
+                    <p style={{fontWeight:600,fontSize:14,marginBottom:2}}>{m.label}</p>
+                    <p style={{fontSize:12,opacity:.7}}>{m.desc}</p>
+                  </div>
+                  {modoPago===m.id&&<span style={{display:"flex",flexShrink:0}}>{Ico.check}</span>}
+                </button>
+              ))}
             </div>
             <div style={{borderTop:`1px solid ${C.grisClaro}`,paddingTop:14,marginBottom:18}}>
               {carrito.map(x=>(
@@ -473,6 +493,52 @@ function PanelAdmin(){
   const {data:pedidosData,loading:loadPed,reload:reloadPed}=useApi(()=>API.pedidos.getAll());
   const {data:finData}=useApi(()=>API.finanzas.resumen());
 
+  // ── Cobro con Point ───────────────────────────────────────────────────
+  const [cobrando,setCobrando]=useState(null);   // pedido_id en proceso
+  const [pointFlash,setPointFlash]=useState({}); // { [pedido_id]: {tipo, msg} }
+  const pollingRef=useRef({});
+
+  const mostrarPointMsg=(id,tipo,msg)=>{
+    setPointFlash(p=>({...p,[id]:{tipo,msg}}));
+    setTimeout(()=>setPointFlash(p=>{const n={...p};delete n[id];return n;}),8000);
+  };
+
+  const iniciarCobroPoint=async(pedido_id)=>{
+    setCobrando(pedido_id);
+    try{
+      await API.point.cobrar(pedido_id);
+      mostrarPointMsg(pedido_id,"info","Monto enviado al posnet. Esperando pago del cliente...");
+      // Polling cada 4s hasta aprobado/rechazado/cancelado
+      pollingRef.current[pedido_id]=setInterval(async()=>{
+        try{
+          const est=await API.point.estado(pedido_id);
+          if(est.mp_status==="approved"){
+            clearInterval(pollingRef.current[pedido_id]);
+            mostrarPointMsg(pedido_id,"ok","Pago aprobado");
+            reloadPed();
+          } else if(["rejected","canceled","error"].includes(est.mp_status)){
+            clearInterval(pollingRef.current[pedido_id]);
+            mostrarPointMsg(pedido_id,"err","Pago rechazado o cancelado");
+            reloadPed();
+          }
+        }catch{}
+      },4000);
+    }catch(e){
+      mostrarPointMsg(pedido_id,"err","Error: "+e.message);
+    }finally{
+      setCobrando(null);
+    }
+  };
+
+  const cancelarPoint=async(pedido_id)=>{
+    try{
+      clearInterval(pollingRef.current[pedido_id]);
+      await API.point.cancelar(pedido_id);
+      mostrarPointMsg(pedido_id,"err","Cobro cancelado");
+      reloadPed();
+    }catch(e){mostrarPointMsg(pedido_id,"err","Error: "+e.message);}
+  };
+
   const [editando,setEditando]=useState(null);
   const [form,setForm]=useState({});
   const [agregando,setAgregando]=useState(false);
@@ -511,7 +577,7 @@ function PanelAdmin(){
   const pedidos=pedidosData||[];
   const items=productos||[];
 
-  const estadoC={"nuevo":{bg:"#e8f0fe",t:"#1a56c4"},"en preparación":{bg:"#fff8e1",t:"#b45309"},"listo":{bg:"#e8f5e9",t:"#2e7d32"},"entregado":{bg:"#f3f4f6",t:"#4b5563"},"cancelado":{bg:"#fef2f2",t:"#b91c1c"}};
+  const estadoC={"pendiente_caja":{bg:"#fff8e1",t:"#b45309"},"nuevo":{bg:"#e8f0fe",t:"#1a56c4"},"en preparación":{bg:"#ede9fe",t:"#6d28d9"},"listo":{bg:"#e8f5e9",t:"#2e7d32"},"entregado":{bg:"#f3f4f6",t:"#4b5563"},"cancelado":{bg:"#fef2f2",t:"#b91c1c"}};
 
   return(
     <div className="page" style={{background:C.crema,paddingTop:56}}>
@@ -609,6 +675,88 @@ function PanelAdmin(){
             </Card>
           )}
         </div>
+
+        {/* ── Caja: pendientes de cobro ── */}
+        {pedidos.filter(p=>p.estado==="pendiente_caja").length>0&&(
+          <div className="admin-section">
+            <div className="admin-section-header">
+              <h2 className="cav" style={{fontSize:22,color:C.bordoOscuro}}>Pendientes de cobro</h2>
+              <span style={{background:"#fff8e1",color:"#b45309",fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20}}>
+                {pedidos.filter(p=>p.estado==="pendiente_caja").length} en espera
+              </span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {pedidos.filter(p=>p.estado==="pendiente_caja").map(p=>{
+                const detalle=Array.isArray(p.items)?p.items.map(x=>`${x.nombre}${x.cantidad>1?` ×${x.cantidad}`:""}`).join(", "):"-";
+                const hora=new Date(p.created_at).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+                const pf=pointFlash[p.id];
+                return(
+                  <Card key={p.id} style={{padding:"16px 18px",border:`1.5px solid ${C.dorado}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
+                      <div>
+                        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+                          <span style={{fontWeight:700,fontSize:16,color:C.bordoOscuro}}>{p.numero}</span>
+                          <span style={{fontSize:12,color:C.grisMedio}}>{hora}</span>
+                          <span style={{fontSize:11,background:p.modo_pago==="posnet"?"#e8f0fe":p.modo_pago==="efectivo"?"#f0f4e8":"#fdf4ff",color:p.modo_pago==="posnet"?"#1a56c4":p.modo_pago==="efectivo"?"#3a6b1a":"#7e22ce",padding:"2px 9px",borderRadius:20,fontWeight:600,textTransform:"capitalize"}}>
+                            {p.modo_pago==="posnet"?"Tarjeta / QR":p.modo_pago==="efectivo"?"Efectivo":"MercadoPago"}
+                          </span>
+                        </div>
+                        <p style={{fontSize:13,color:C.grisMedio,marginBottom:4}}>{detalle}</p>
+                        <p style={{fontWeight:700,fontSize:18,color:C.bordoOscuro}}>{fmt(p.total)}</p>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
+                        {/* Efectivo: confirmar directamente */}
+                        {p.modo_pago==="efectivo"&&(
+                          <button className="btn-g" style={{padding:"9px 18px",fontSize:13}} onClick={async()=>{
+                            try{await API.pedidos.confirmarCaja(p.id);reloadPed();showFlash("Pago confirmado — pedido enviado a cocina");}
+                            catch(e){showFlash("Error: "+e.message);}
+                          }}>
+                            {Ico.check} Confirmar cobro
+                          </button>
+                        )}
+                        {/* Posnet: enviar al Point y luego confirmar */}
+                        {p.modo_pago==="posnet"&&(
+                          <div style={{display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end"}}>
+                            {pf&&(
+                              <p style={{fontSize:12,fontWeight:600,color:pf.tipo==="ok"?"#2e7d32":pf.tipo==="err"?"#9a2a2a":C.bordoMedio}}>
+                                {pf.msg}
+                              </p>
+                            )}
+                            <div style={{display:"flex",gap:8}}>
+                              <button className="btn-p" style={{padding:"9px 16px",fontSize:13}} onClick={()=>iniciarCobroPoint(p.id)} disabled={cobrando===p.id}>
+                                {cobrando===p.id?"Enviando...":"Cobrar con posnet"}
+                              </button>
+                              {pf?.tipo==="info"&&(
+                                <button className="btn-danger" style={{padding:"8px 12px",fontSize:13}} onClick={()=>cancelarPoint(p.id)}>Cancelar</button>
+                              )}
+                              {/* Confirmación manual si el posnet no responde */}
+                              <button className="btn-o" style={{padding:"8px 12px",fontSize:12}} onClick={async()=>{
+                                try{await API.pedidos.confirmarCaja(p.id);reloadPed();showFlash("Cobro confirmado manualmente");}
+                                catch(e){showFlash("Error: "+e.message);}
+                              }}>
+                                Confirmar manual
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {/* Online: esperando webhook de MP */}
+                        {p.modo_pago==="online"&&(
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{fontSize:12,color:C.grisMedio}}>Esperando pago online...</span>
+                            <button className="btn-danger" style={{padding:"6px 12px",fontSize:12}} onClick={async()=>{
+                              try{await API.pedidos.setEstado(p.id,"cancelado");reloadPed();}
+                              catch(e){showFlash("Error: "+e.message);}
+                            }}>Cancelar</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Pedidos recientes */}
         <div className="admin-section">

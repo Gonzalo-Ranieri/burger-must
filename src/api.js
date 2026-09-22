@@ -45,7 +45,8 @@ export const pedidos = {
   create:       (data)          => req("POST",  "/api/pedidos",              data),
   getAll:       (params = {})   => req("GET",   "/api/pedidos?" + new URLSearchParams(params)),
   getById:      (id)            => req("GET",   `/api/pedidos/${id}`),
-  setEstado:    (id, estado)    => req("PATCH", `/api/pedidos/${id}/estado`,  { estado }),
+  setEstado:      (id, estado)  => req("PATCH", `/api/pedidos/${id}/estado`,        { estado }),
+  confirmarCaja:  (id)          => req("POST",  `/api/pedidos/${id}/confirmar-caja`, {}),
 };
 
 /* ── PAGOS ──────────────────────────────────────────────────────────────── */
@@ -66,6 +67,14 @@ export const caja = {
   cerrar:            (notas)        => req("POST", "/api/caja/cerrar",     { notas }),
   movimiento:        (data)         => req("POST", "/api/caja/movimiento", data),
   historial:         ()             => req("GET",  "/api/caja/historial"),
+};
+
+/* ── POINT PLUS ─────────────────────────────────────────────────────────── */
+export const point = {
+  dispositivos: ()          => req("GET",    "/api/point/dispositivos"),
+  cobrar:       (pedido_id) => req("POST",   "/api/point/cobrar",          { pedido_id }),
+  cancelar:     (pedido_id) => req("DELETE", `/api/point/cobrar/${pedido_id}`),
+  estado:       (pedido_id) => req("GET",    `/api/point/estado/${pedido_id}`),
 };
 
 /* ── STOCK ──────────────────────────────────────────────────────────────── */
