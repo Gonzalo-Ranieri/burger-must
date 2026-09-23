@@ -28,6 +28,11 @@ const Ico = {
   arrow:   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="3,7 11,7"/><polyline points="7,3 11,7 7,11"/></svg>,
   live:    <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#4CAF50"/></svg>,
   refresh: <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 C10 0.5 7.5 0 5 1 C2 2.5 0.5 5.5 1 9"/><polyline points="0,6 1,9 4,8"/><path d="M2 12 C4 13.5 6.5 14 9 13 C12 11.5 13.5 8.5 13 5"/><polyline points="14,8 13,5 10,6"/></svg>,
+  nuevoPedido: <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><line x1="10" y1="7" x2="10" y2="13"/><line x1="7" y1="10" x2="13" y2="10"/></svg>,
+  cash:        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="5" width="18" height="12" rx="2"/><circle cx="10" cy="11" r="3"/></svg>,
+  card:        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="18" height="13" rx="2"/><line x1="1" y1="9" x2="19" y2="9"/><line x1="5" y1="13" x2="9" y2="13"/></svg>,
+  deliver:     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M1 10 H13 L16 4 H4"/><path d="M13 10 L15 16 H18"/><circle cx="5" cy="17" r="1.5"/><circle cx="15" cy="17" r="1.5"/></svg>,
+  ticket:      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 4 H17 V12 L14 11 L11 13 L8 11 L5 13 L3 12 Z"/><line x1="7" y1="8" x2="13" y2="8"/></svg>,
 };
 
 /* ─── ROLES Y TABS ────────────────────────────────────────────────────── */
@@ -38,7 +43,14 @@ const ROLES = {
 };
 const TABS_POR_ROL = {
   cliente:[{id:"menu",label:"Menú",ico:"menu"},{id:"tienda",label:"Tienda",ico:"tienda"}],
-  admin:  [{id:"menu",label:"Menú",ico:"menu"},{id:"tienda",label:"Tienda",ico:"tienda"},{id:"admin",label:"Administración",ico:"admin"},{id:"finanzas",label:"Finanzas",ico:"finanzas"}],
+  admin:  [
+    {id:"caja",    label:"Caja",          ico:"caja"},
+    {id:"cocina",  label:"Cocina",         ico:"cocina"},
+    {id:"menu",    label:"Menú",           ico:"menu"},
+    {id:"tienda",  label:"Tienda",         ico:"tienda"},
+    {id:"admin",   label:"Administración", ico:"admin"},
+    {id:"finanzas",label:"Finanzas",       ico:"finanzas"},
+  ],
   cocina: [{id:"cocina",label:"Cocina",ico:"cocina"}],
 };
 
@@ -231,6 +243,408 @@ function Login({onLogin}){
 }
 
 /* ─── MENÚ DIGITAL ────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+   VISTA CAJA
+   Izquierda: pendientes de cobro
+   Derecha: listos para entregar
+   Drawer: nuevo pedido desde caja
+   Footer: estado de caja
+   ═══════════════════════════════════════════════════════════════════════ */
+function VistaCaja(){
+  const [pedidos,setPedidos]=useState([]);
+  const [menuItems,setMenuItems]=useState([]);
+  const [caja,setCaja]=useState(null);
+  const [loadingCaja,setLoadingCaja]=useState(true);
+  const [cobrando,setCobrando]=useState(null);
+  const [pointMsg,setPointMsg]=useState({});
+  const [procesando,setProcesando]=useState({});
+  const [fondoModal,setFondoModal]=useState(false);
+  const [fondo,setFondo]=useState("");
+
+  // Drawer nuevo pedido
+  const [drawerOpen,setDrawerOpen]=useState(false);
+  const [carrito,setCarrito]=useState([]);
+  const [entrega,setEntrega]=useState("takeaway");
+  const [pago,setPago]=useState("efectivo");
+  const [cobrado,setCobrado]=useState(true);
+  const [submitPed,setSubmitPed]=useState(false);
+  const [errPed,setErrPed]=useState(null);
+  const [okPed,setOkPed]=useState(null);
+  const [catFiltro,setCatFiltro]=useState("Todas");
+
+  const pollingRef=useRef({});
+
+  const cargar=useCallback(async()=>{
+    try{
+      const [p,c,m]=await Promise.all([
+        API.pedidos.getAll(),
+        API.caja.sesionActiva(),
+        API.menu.get(),
+      ]);
+      setPedidos(p.filter(x=>["pendiente_caja","nuevo","en preparación","listo"].includes(x.estado)));
+      setCaja(c);
+      setMenuItems(m);
+    }catch(e){console.error(e);}
+    finally{setLoadingCaja(false);}
+  },[]);
+
+  usePolling(cargar,8000);
+
+  const setProcId=(id,v)=>setProcesando(p=>({...p,[id]:v}));
+  const setMsg=(id,tipo,msg)=>{setPointMsg(p=>({...p,[id]:{tipo,msg}}));setTimeout(()=>setPointMsg(p=>{const n={...p};delete n[id];return n;}),7000);};
+
+  /* ── Cobro ──────────────────────────────────────────────────────────── */
+  const confirmarEfectivo=async id=>{
+    setProcId(id,true);
+    try{await API.pedidos.confirmarCaja(id);await cargar();}
+    catch(e){setMsg(id,"err",e.message);}
+    finally{setProcId(id,false);}
+  };
+  const cobrarPostnet=async id=>{
+    setCobrando(id);
+    try{
+      await API.point.cobrar(id);
+      setMsg(id,"info","Monto enviado al posnet...");
+      pollingRef.current[id]=setInterval(async()=>{
+        try{
+          const est=await API.point.estado(id);
+          if(est.mp_status==="approved"){clearInterval(pollingRef.current[id]);setMsg(id,"ok","Pago aprobado");await cargar();}
+          else if(["rejected","canceled","error"].includes(est.mp_status)){clearInterval(pollingRef.current[id]);setMsg(id,"err","Pago rechazado");await cargar();}
+        }catch{}
+      },4000);
+    }catch(e){setMsg(id,"err",e.message);}
+    finally{setCobrando(null);}
+  };
+  const cancelarPostnet=async id=>{clearInterval(pollingRef.current[id]);try{await API.point.cancelar(id);setMsg(id,"err","Cobro cancelado");}catch(e){setMsg(id,"err",e.message);}};
+  const confirmarEntrega=async id=>{setProcId(id,true);try{await API.pedidos.setEstado(id,"entregado");await cargar();}catch(e){setMsg(id,"err",e.message);}finally{setProcId(id,false);}};
+  const cancelarPedido=async id=>{if(!window.confirm("¿Cancelar este pedido?"))return;try{await API.pedidos.setEstado(id,"cancelado");await cargar();}catch(e){alert(e.message);}};
+
+  /* ── Caja ───────────────────────────────────────────────────────────── */
+  const abrirCaja=async()=>{try{await API.caja.abrir(Number(fondo)||0);setFondoModal(false);setFondo("");await cargar();}catch(e){alert(e.message);}};
+  const cerrarCaja=async()=>{if(!window.confirm("¿Cerrar la caja?"))return;try{await API.caja.cerrar();await cargar();}catch(e){alert(e.message);}};
+
+  /* ── Nuevo pedido desde caja ────────────────────────────────────────── */
+  const agregar=item=>setCarrito(c=>{const ex=c.find(x=>x.id===item.id);return ex?c.map(x=>x.id===item.id?{...x,qty:x.qty+1}:x):[...c,{...item,qty:1}];});
+  const quitar=id=>setCarrito(c=>{const ex=c.find(x=>x.id===id);return ex?.qty===1?c.filter(x=>x.id!==id):c.map(x=>x.id===id?{...x,qty:x.qty-1}:x);});
+  const totalCarrito=carrito.reduce((s,x)=>s+x.precio*x.qty,0);
+  const cantCarrito=carrito.reduce((s,x)=>s+x.qty,0);
+
+  const confirmarPedido=async()=>{
+    if(!carrito.length)return;
+    setSubmitPed(true);setErrPed(null);
+    try{
+      const p=await API.pedidos.createCaja({
+        items:carrito.map(x=>({producto_id:x.id,cantidad:x.qty})),
+        modo_entrega:entrega,
+        modo_pago:pago,
+        origen:"caja",
+        cobrado: pago==="online" ? false : cobrado,
+      });
+      if(pago==="online"){
+        const{init_point}=await API.pagos.preference(p.id);
+        window.open(init_point,"_blank");
+      }
+      setOkPed(p);setCarrito([]);setPago("efectivo");setEntrega("takeaway");setCobrado(true);
+      await cargar();
+    }catch(e){setErrPed(e.message);}
+    finally{setSubmitPed(false);}
+  };
+
+  const cats=["Todas",...new Set(menuItems.map(i=>i.categoria))];
+  const menuFiltrado=catFiltro==="Todas"?menuItems:menuItems.filter(i=>i.categoria===catFiltro);
+  const pendientes=pedidos.filter(p=>p.estado==="pendiente_caja");
+  const listos=pedidos.filter(p=>p.estado==="listo");
+  const enCurso=pedidos.filter(p=>["nuevo","en preparación"].includes(p.estado));
+
+  /* ── Card pendiente ─────────────────────────────────────────────────── */
+  const CardPendiente=({p})=>{
+    const msg=pointMsg[p.id];
+    const items=Array.isArray(p.items)?p.items:[];
+    const detalle=items.map(x=>`${x.nombre}${x.cantidad>1?` ×${x.cantidad}`:""}`).join(" · ");
+    const hora=new Date(p.created_at).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+    const origenTag=p.origen&&p.origen!=="caja"&&p.origen!=="web"?p.origen:null;
+    return(
+      <div style={{background:C.blanco,borderRadius:14,border:`1.5px solid ${C.grisClaro}`,marginBottom:10,overflow:"hidden"}}>
+        <div style={{padding:"12px 16px",borderBottom:`1px solid #F0EDE8`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span style={{fontWeight:800,fontSize:18,color:C.bordoOscuro}}>{p.numero}</span>
+            <span style={{fontSize:12,color:C.grisMedio}}>{hora}</span>
+            {origenTag&&<span style={{fontSize:10,background:C.bordoOscuro,color:C.dorado,padding:"2px 7px",borderRadius:20,fontWeight:700,textTransform:"uppercase"}}>{origenTag}</span>}
+            <span style={{fontSize:11,background:p.modo_entrega==="delivery"?"#EDE9FE":"#F0F4E8",color:p.modo_entrega==="delivery"?"#6D28D9":"#3A6B1A",padding:"2px 8px",borderRadius:20,fontWeight:600}}>{p.modo_entrega==="delivery"?"Delivery":"Take away"}</span>
+          </div>
+          <span style={{fontWeight:800,fontSize:20,color:C.bordoOscuro}}>{fmt(p.total)}</span>
+        </div>
+        <div style={{padding:"12px 16px"}}>
+          <p style={{fontSize:13,color:C.grisMedio,marginBottom:12,lineHeight:1.5}}>{detalle||"—"}</p>
+          {msg&&<div style={{marginBottom:10,padding:"8px 12px",borderRadius:8,background:msg.tipo==="ok"?C.verdeClaro:msg.tipo==="err"?C.rojoClaro:C.ambarClaro,color:msg.tipo==="ok"?C.verde:msg.tipo==="err"?C.rojo:C.ambar,fontSize:13,fontWeight:600}}>{msg.msg}</div>}
+          {p.modo_pago==="efectivo"&&(
+            <button style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,border:"none",borderRadius:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:700,padding:"16px",width:"100%",background:C.verde,color:C.blanco,fontSize:16}} onClick={()=>confirmarEfectivo(p.id)} disabled={procesando[p.id]}>
+              <span style={{display:"flex"}}>{Ico.cash}</span>{procesando[p.id]?"Procesando...":"Cobrado en efectivo"}
+            </button>
+          )}
+          {p.modo_pago==="posnet"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <button style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,border:"none",borderRadius:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:700,padding:"16px",width:"100%",background:C.azul,color:C.blanco,fontSize:16}} onClick={()=>cobrarPostnet(p.id)} disabled={cobrando===p.id}>
+                <span style={{display:"flex"}}>{Ico.card}</span>{cobrando===p.id?"Enviando...":"Cobrar con posnet"}
+              </button>
+              <div style={{display:"flex",gap:8}}>
+                {msg?.tipo==="info"&&<button style={{flex:1,padding:"10px",borderRadius:10,border:"none",background:C.rojoClaro,color:C.rojo,fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:13,cursor:"pointer"}} onClick={()=>cancelarPostnet(p.id)}>Cancelar</button>}
+                <button style={{flex:1,padding:"10px",borderRadius:10,border:`1.5px solid ${C.grisClaro}`,background:C.crema,color:C.bordoOscuro,fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:13,cursor:"pointer"}} onClick={()=>confirmarEfectivo(p.id)}>Confirmar manual</button>
+              </div>
+            </div>
+          )}
+          {p.modo_pago==="online"&&(
+            <div style={{padding:"12px",background:C.azulClaro,borderRadius:10,textAlign:"center"}}>
+              <p style={{color:C.azul,fontWeight:600,fontSize:14,marginBottom:2}}>Esperando pago online</p>
+              <p style={{color:C.grisMedio,fontSize:12}}>MercadoPago notifica automáticamente</p>
+            </div>
+          )}
+        </div>
+        <div style={{padding:"8px 16px",borderTop:`1px solid #F0EDE8`}}>
+          <button className="btn-danger" style={{fontSize:12,padding:"5px 12px"}} onClick={()=>cancelarPedido(p.id)}>{Ico.close} Cancelar pedido</button>
+        </div>
+      </div>
+    );
+  };
+
+  /* ── Card listo ─────────────────────────────────────────────────────── */
+  const CardListo=({p})=>{
+    const items=Array.isArray(p.items)?p.items:[];
+    const detalle=items.map(x=>`${x.nombre}${x.cantidad>1?` ×${x.cantidad}`:""}`).join(" · ");
+    const hora=new Date(p.created_at).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+    return(
+      <div style={{background:C.blanco,borderRadius:14,border:`1.5px solid ${C.dorado}`,marginBottom:10,overflow:"hidden"}}>
+        <div style={{padding:"12px 16px",borderBottom:`1px solid #F0EDE8`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontWeight:800,fontSize:18,color:C.bordoOscuro}}>{p.numero}</span>
+            <span style={{fontSize:12,color:C.grisMedio}}>{hora}</span>
+          </div>
+          <span style={{fontSize:11,background:C.verdeClaro,color:C.verde,padding:"3px 10px",borderRadius:20,fontWeight:700}}>Listo</span>
+        </div>
+        <div style={{padding:"12px 16px"}}>
+          <p style={{fontSize:13,color:C.grisMedio,marginBottom:14,lineHeight:1.5}}>{detalle||"—"}</p>
+          <button style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,border:"none",borderRadius:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:700,padding:"18px",width:"100%",background:C.verde,color:C.blanco,fontSize:17}} onClick={()=>confirmarEntrega(p.id)} disabled={procesando[p.id]}>
+            <span style={{display:"flex"}}>{Ico.deliver}</span>{procesando[p.id]?"Procesando...":"Entregar pedido"}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const MODOS_PAGO_CAJA=[
+    {id:"efectivo",label:"Efectivo",    ico:Ico.cash},
+    {id:"posnet",  label:"Tarjeta/QR",  ico:Ico.card},
+    {id:"online",  label:"MercadoPago", ico:null},
+  ];
+
+  return(
+    <div style={{height:"calc(100vh - 56px)",display:"flex",flexDirection:"column",background:C.crema,position:"relative"}}>
+      {/* Modal abrir caja */}
+      {fondoModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(61,26,46,.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div style={{background:C.blanco,borderRadius:16,padding:"32px 28px",width:"100%",maxWidth:360}}>
+            <h2 className="cav" style={{fontSize:28,color:C.bordoOscuro,marginBottom:20}}>Abrir caja</h2>
+            <label className="field-label">Fondo inicial en efectivo</label>
+            <input className="field-input" type="number" placeholder="0" value={fondo} onChange={e=>setFondo(e.target.value)} style={{marginBottom:20,fontSize:18}} autoFocus/>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn-o" style={{flex:1,justifyContent:"center"}} onClick={()=>setFondoModal(false)}>Cancelar</button>
+              <button className="btn-g" style={{flex:2,justifyContent:"center"}} onClick={abrirCaja}>Abrir caja</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drawer: nuevo pedido */}
+      {drawerOpen&&(
+        <div style={{position:"fixed",inset:0,zIndex:250,display:"flex"}}>
+          {/* overlay */}
+          <div style={{flex:1,background:"rgba(61,26,46,.5)"}} onClick={()=>{setDrawerOpen(false);setOkPed(null);setErrPed(null);}}/>
+          {/* panel */}
+          <div style={{width:"min(480px, 100vw)",background:C.blanco,display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
+            {/* Header drawer */}
+            <div style={{background:C.bordoOscuro,padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+              <h2 className="cav" style={{color:C.blanco,fontSize:24}}>Nuevo pedido</h2>
+              <button onClick={()=>{setDrawerOpen(false);setOkPed(null);setErrPed(null);}} style={{background:"none",border:"none",color:C.grisMedio,cursor:"pointer",display:"flex"}}>{Ico.close}</button>
+            </div>
+
+            {okPed?(
+              /* Confirmación */
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,textAlign:"center"}}>
+                <div style={{width:56,height:56,borderRadius:"50%",background:C.verdeClaro,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",color:C.verde}}>{Ico.check}</div>
+                <h3 className="cav" style={{fontSize:30,color:C.bordoOscuro,marginBottom:6}}>Pedido creado</h3>
+                <p style={{color:C.bordoMedio,fontWeight:700,fontSize:17,marginBottom:8}}>{okPed.numero}</p>
+                <p style={{color:C.grisMedio,marginBottom:24}}>{okPed.estado==="nuevo"?"Enviado directo a cocina.":"Pendiente de cobro en caja."}</p>
+                <button className="btn-p" style={{justifyContent:"center"}} onClick={()=>setOkPed(null)}>Nuevo pedido</button>
+              </div>
+            ):(
+              <>
+                {/* Filtros categoría */}
+                <div style={{display:"flex",overflowX:"auto",borderBottom:`1px solid ${C.grisClaro}`,flexShrink:0}}>
+                  {cats.map(c=>(
+                    <button key={c} onClick={()=>setCatFiltro(c)} style={{background:"none",border:"none",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:catFiltro===c?600:400,color:catFiltro===c?C.bordoOscuro:C.grisMedio,borderBottom:catFiltro===c?`2px solid ${C.bordoOscuro}`:"2px solid transparent",padding:"10px 14px",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{c}</button>
+                  ))}
+                </div>
+
+                {/* Grilla de productos */}
+                <div style={{flex:1,overflowY:"auto",padding:"12px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                    {menuFiltrado.map(item=>{
+                      const en=carrito.find(x=>x.id===item.id);
+                      return(
+                        <div key={item.id} style={{background:en?C.bordoOscuro:C.blanco,border:`1.5px solid ${en?C.bordoOscuro:C.grisClaro}`,borderRadius:12,padding:"12px",cursor:"pointer",transition:"all .15s",userSelect:"none"}} onClick={()=>agregar(item)}>
+                          <p style={{fontWeight:700,fontSize:14,color:en?C.blanco:C.texto,marginBottom:2}}>{item.nombre}</p>
+                          <p style={{fontSize:11,color:en?"rgba(255,255,255,.7)":C.grisMedio,marginBottom:8,lineHeight:1.3}}>{item.categoria}</p>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <span style={{fontWeight:700,fontSize:15,color:en?C.dorado:C.bordoOscuro}}>{fmt(item.precio)}</span>
+                            {en&&(
+                              <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(255,255,255,.15)",borderRadius:8,padding:"3px 8px"}} onClick={e=>e.stopPropagation()}>
+                                <button onClick={()=>quitar(item.id)} style={{background:"none",border:"none",color:C.blanco,fontSize:16,cursor:"pointer",lineHeight:1}}>−</button>
+                                <span style={{color:C.blanco,fontWeight:700,fontSize:14,minWidth:16,textAlign:"center"}}>{en.qty}</span>
+                                <button onClick={()=>agregar(item)} style={{background:"none",border:"none",color:C.dorado,fontSize:16,cursor:"pointer",lineHeight:1}}>+</button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Panel de cobro */}
+                {carrito.length>0&&(
+                  <div style={{borderTop:`1px solid ${C.grisClaro}`,padding:"14px 16px",flexShrink:0,background:C.blanco}}>
+                    {/* Resumen */}
+                    <div style={{marginBottom:12}}>
+                      {carrito.map(x=>(
+                        <div key={x.id} style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:4}}>
+                          <span style={{color:C.texto}}>{x.nombre} <span style={{color:C.grisMedio}}>×{x.qty}</span></span>
+                          <span style={{fontWeight:600,color:C.bordoOscuro}}>{fmt(x.precio*x.qty)}</span>
+                        </div>
+                      ))}
+                      <div style={{display:"flex",justifyContent:"space-between",fontWeight:800,fontSize:18,borderTop:`1px solid ${C.grisClaro}`,paddingTop:8,marginTop:8}}>
+                        <span>Total</span><span style={{color:C.bordoOscuro}}>{fmt(totalCarrito)}</span>
+                      </div>
+                    </div>
+
+                    {/* Entrega */}
+                    <div style={{display:"flex",gap:6,marginBottom:10}}>
+                      {[["takeaway","Take away"],["delivery","Delivery"]].map(([k,l])=>(
+                        <button key={k} onClick={()=>setEntrega(k)} style={{flex:1,padding:"8px",borderRadius:8,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:13,background:entrega===k?C.bordoOscuro:C.crema,color:entrega===k?C.blanco:C.texto,border:`1.5px solid ${entrega===k?C.bordoOscuro:C.grisClaro}`}}>{l}</button>
+                      ))}
+                    </div>
+
+                    {/* Modo de pago */}
+                    <div style={{display:"flex",gap:6,marginBottom:10}}>
+                      {MODOS_PAGO_CAJA.map(m=>(
+                        <button key={m.id} onClick={()=>setPago(m.id)} style={{flex:1,padding:"8px 4px",borderRadius:8,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12,background:pago===m.id?C.bordoOscuro:C.crema,color:pago===m.id?C.blanco:C.texto,border:`1.5px solid ${pago===m.id?C.bordoOscuro:C.grisClaro}`,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                          {m.ico&&<span style={{display:"flex",transform:"scale(.8)"}}>{m.ico}</span>}
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Cobrado de inmediato (efectivo/posnet) */}
+                    {pago!=="online"&&(
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                        <input type="checkbox" id="cobrado" checked={cobrado} onChange={e=>setCobrado(e.target.checked)} style={{width:18,height:18,cursor:"pointer"}}/>
+                        <label htmlFor="cobrado" style={{fontSize:13,fontWeight:500,color:C.texto,cursor:"pointer"}}>
+                          {pago==="efectivo"?"Ya cobré el efectivo":"Ya pasé la tarjeta / QR"}
+                        </label>
+                      </div>
+                    )}
+
+                    {errPed&&<div className="error-banner" style={{marginBottom:10}}>{errPed}</div>}
+
+                    <button className="btn-g" style={{width:"100%",justifyContent:"center",fontSize:15,padding:"14px"}} onClick={confirmarPedido} disabled={submitPed||!carrito.length}>
+                      {submitPed?"Procesando...":`Confirmar · ${fmt(totalCarrito)}`}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Layout principal: dos columnas */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",flex:1,overflow:"hidden"}}>
+        {/* Columna izquierda: pendientes */}
+        <div style={{display:"flex",flexDirection:"column",overflow:"hidden",borderRight:`1px solid ${C.grisClaro}`}}>
+          <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.grisClaro}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:C.blanco,flexShrink:0}}>
+            <div>
+              <h2 className="cav" style={{fontSize:21,color:C.bordoOscuro}}>Pendientes de cobro</h2>
+              <p style={{fontSize:12,color:C.grisMedio}}>{pendientes.length} en espera{enCurso.length>0?` · ${enCurso.length} en cocina`:""}</p>
+            </div>
+            <button onClick={cargar} style={{background:"none",border:"none",color:C.grisMedio,cursor:"pointer",display:"flex",padding:4}}>{Ico.refresh}</button>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:12}}>
+            {pendientes.length===0
+              ?<div style={{textAlign:"center",padding:"40px 20px",color:C.grisMedio}}>
+                <div style={{fontSize:32,marginBottom:8,opacity:.3,display:"flex",justifyContent:"center"}}>{Ico.ticket}</div>
+                <p style={{fontSize:14}}>Sin pedidos pendientes</p>
+              </div>
+              :pendientes.map(p=><CardPendiente key={p.id} p={p}/>)
+            }
+          </div>
+        </div>
+
+        {/* Columna derecha: listos */}
+        <div style={{display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.grisClaro}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:C.blanco,flexShrink:0}}>
+            <div>
+              <h2 className="cav" style={{fontSize:21,color:C.bordoOscuro}}>Listos para entregar</h2>
+              <p style={{fontSize:12,color:C.grisMedio}}>{listos.length} pedidos</p>
+            </div>
+            {listos.length>0&&<span style={{background:C.verdeClaro,color:C.verde,fontSize:13,fontWeight:700,padding:"3px 12px",borderRadius:20}}>{listos.length} listos</span>}
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:12}}>
+            {listos.length===0
+              ?<div style={{textAlign:"center",padding:"40px 20px",color:C.grisMedio}}>
+                <div style={{fontSize:32,marginBottom:8,opacity:.3,display:"flex",justifyContent:"center"}}>{Ico.deliver}</div>
+                <p style={{fontSize:14}}>Sin pedidos listos aún</p>
+              </div>
+              :listos.map(p=><CardListo key={p.id} p={p}/>)
+            }
+          </div>
+        </div>
+      </div>
+
+      {/* Footer: estado de caja + botón nuevo pedido */}
+      <div style={{background:C.bordoOscuro,padding:"10px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          {loadingCaja
+            ?<span style={{color:C.grisMedio,fontSize:13}}>Cargando...</span>
+            :caja
+              ?<>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{width:8,height:8,borderRadius:"50%",background:"#4CAF50",display:"inline-block"}}/>
+                  <span style={{color:C.blanco,fontWeight:600,fontSize:14}}>Caja abierta</span>
+                </div>
+                <span style={{color:C.grisMedio,fontSize:13}}>Fondo: {fmt(caja.fondo_inicial)} · Desde {new Date(caja.abierta_at).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}</span>
+              </>
+              :<div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:C.rojo,display:"inline-block"}}/>
+                <span style={{color:C.grisMedio,fontSize:13}}>Caja cerrada</span>
+              </div>
+          }
+        </div>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {!caja
+            ?<button className="btn-g" style={{padding:"8px 18px",fontSize:13}} onClick={()=>setFondoModal(true)}>Abrir caja</button>
+            :<button style={{background:"none",border:"1px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.6)",fontFamily:"'DM Sans',sans-serif",fontSize:12,padding:"7px 14px",borderRadius:6,cursor:"pointer"}} onClick={cerrarCaja}>Cerrar caja</button>
+          }
+          <button style={{display:"flex",alignItems:"center",gap:8,background:C.dorado,color:C.bordoOscuro,border:"none",borderRadius:8,padding:"10px 20px",fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:14,cursor:"pointer",transition:"background .15s"}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.doradoOscuro}
+            onMouseLeave={e=>e.currentTarget.style.background=C.dorado}
+            onClick={()=>{setDrawerOpen(true);setOkPed(null);}}>
+            <span style={{display:"flex"}}>{Ico.nuevoPedido}</span> Nuevo pedido
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MenuDigital(){
   const {data:items,loading,error,reload}=useApi(()=>API.menu.get());
   const [cat,setCat]=useState("Todas");
@@ -1070,6 +1484,7 @@ export default function App(){
           </div>
         </nav>
       )}
+      {vista==="caja"     &&<VistaCaja/>}
       {vista==="menu"     &&<MenuDigital/>}
       {vista==="tienda"   &&<TiendaOnline/>}
       {vista==="admin"    &&<PanelAdmin/>}

@@ -47,6 +47,12 @@ export const pedidos = {
   getById:      (id)            => req("GET",   `/api/pedidos/${id}`),
   setEstado:      (id, estado)  => req("PATCH", `/api/pedidos/${id}/estado`,        { estado }),
   confirmarCaja:  (id)          => req("POST",  `/api/pedidos/${id}/confirmar-caja`, {}),
+  createCaja:     (data)        => req("POST",  "/api/pedidos/caja",                data),
+};
+
+/* ── INTEGRACIONES ──────────────────────────────────────────────────────── */
+export const integraciones = {
+  getAll: () => req("GET", "/api/integraciones"),
 };
 
 /* ── PAGOS ──────────────────────────────────────────────────────────────── */
