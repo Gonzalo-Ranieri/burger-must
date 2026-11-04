@@ -170,14 +170,7 @@ function Login({onLogin}){
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
 
-  // Prefills de demo por rol
-  const DEMO={
-    admin:  {email:"admin@burgermust.com",  pass:"admin1234"},
-    cocina: {email:"cocina@burgermust.com", pass:"admin1234"},
-    cliente:{email:"",pass:""},
-  };
-
-  const selRol=r=>{setRol(r);setEmail(DEMO[r].email);setPass(DEMO[r].pass);setError(null);};
+  const selRol=r=>{setRol(r);setEmail("");setPass("");setError(null);};
 
   const submit=async()=>{
     if(!rol) return;
@@ -225,7 +218,7 @@ function Login({onLogin}){
           <div style={{marginBottom:12}}>
             <div style={{marginBottom:8}}>
               <label className="field-label">Email</label>
-              <input className="field-input" value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="admin@burgermust.com"/>
+              <input className="field-input" value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="tu@email.com"/>
             </div>
             <div>
               <label className="field-label">Contraseña</label>
